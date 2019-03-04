@@ -170,12 +170,24 @@ enum Sexp {
     case atom(Token)
     case list([Sexp])
 
-    static func toString(_ sexp: Sexp) -> String {
-        switch sexp {
+    func getValue() -> String {
+        if case let .atom(token) = self {
+            switch token {
+            case let .symbol(val), let .integer(val), let .string(val), let .double(val):
+                return val
+            default:
+                return "ERROR"
+            }
+        }
+        return "ERROR"
+    }
+
+    func toString() -> String {
+        switch self {
         case let .atom(token):
             return "\(token)"
         case let .list(values):
-            return "[ " + values.map { toString($0) }.joined(separator: ", ") + " ]"
+            return "[ " + values.map { $0.toString() }.joined(separator: ", ") + " ]"
         }
     }
 }
@@ -207,14 +219,14 @@ class Parser {
 
     private func pushBack() {
         if position > 0 {
-            position = position - 1
+            position -= 1
         }
     }
 
     private func next() -> Token {
-        let t = tokens[position]
+        let token = tokens[position]
         position += 1
-        return t
+        return token
     }
 
     private func notDone() -> Bool {
@@ -245,63 +257,168 @@ class Parser {
 // ----------------------------------------------------------------------------
 
 class Compiler {
-    func compile(expression _: Sexp) {}
+    // Attempts to output sensible Swift from Lisp forms
+
+    var primitives: [String: String] = [
+        "+": "Core._plus",
+    ]
+
+    func getPrimitive(_ name: String) -> String {
+        return primitives[name] ?? name
+    }
+
+    func compileDef(_ sexp: Sexp) -> String {
+        if case let .list(values) = sexp {
+            let name = values[1].getValue()
+            let val = values[2]
+            var expr = ""
+            switch val {
+            case .atom:
+                expr = val.getValue()
+            case .list:
+                expr = compileCall(val)
+            }
+            return "let \(name) = \(expr)"
+        }
+        return "#ERROR#"
+    }
+
+    func compileCall(_ sexp: Sexp) -> String {
+        if case let .list(values) = sexp {
+            let name = getPrimitive(values[0].getValue())
+            let params = values.dropFirst()
+                .map {
+                    switch $0 {
+                    case .atom:
+                        return $0.getValue()
+                    case .list:
+                        return compileCall($0)
+                    }
+
+                }.joined(separator: ", ")
+            return "\(name)(\(params))"
+        }
+        return "#ERROR#"
+    }
+
+    func compileParams(_ sexp: Sexp) -> String {
+        if case let .list(values) = sexp {
+            return values.map { "_ \($0.getValue()):Any" }.joined(separator: ", ")
+        }
+        return "#ERROR#"
+    }
+
+    func compileDefun(_ sexp: Sexp) -> String {
+        if case let .list(values) = sexp {
+            let name = values[1].getValue()
+            let params = compileParams(values[2])
+            var exprs: [String] = values[3 ..< Array(values).count].map {
+                switch $0 {
+                case .atom:
+                    return "  " + $0.getValue()
+                case .list:
+                    return "  " + compileCall($0)
+                }
+            }
+
+            exprs[exprs.count - 1] = "  return " + (exprs.last ?? "nil").trim()
+            let body = exprs.joined(separator: "\n")
+            return "func \(name) (\(params)) -> Any {\n\(body)\n}"
+        }
+        return "#ERROR#"
+    }
+
+    func compile(_ sexp: Sexp) {
+        switch sexp {
+        case .atom:
+            print("got a token \(sexp.getValue())")
+        case let .list(tokens):
+
+            if let atom = tokens.first {
+                switch atom {
+                case .atom:
+                    switch atom.getValue() {
+                    case "def":
+                        print(compileDef(sexp))
+                    case "defun":
+                        print(compileDefun(sexp))
+                    default:
+                        print(compileCall(sexp))
+                    }
+                case .list:
+                    print("can't start with a form with a list")
+                }
+                return
+            }
+
+            print("can't compile sexp")
+        }
+    }
 }
 
 // ----------------------------------------------------------------------------
 
-func main() {
-    let script = """
+let core = try String(contentsOfFile: "./core.swift", encoding: .utf8)
+
+let script =
+    """
       (def x 23)
       (def y 44.5)
+
       (defun add (a b)
         (+ a b x y))
-      (add 1 2)
+      (print (add 1 2))
+      (print (add (add 1 2) (+ 3 4)))
     """
 
+func main() {
+    print(core)
     do {
         let reader = Reader(text: script)
         while let form = try reader.read() {
-            print("form: \(form)")
+            print("  ")
             let tokens = Lexer.lex(form: form)
-            tokens.forEach { token in
-                print("  token: `\(token)`")
-            }
-
             let expr = try Parser(tokens).parse()
-            print("  expr: `\(Sexp.toString(expr))`")
+            let comp = Compiler()
+            comp.compile(expr)
         }
     } catch let err {
         print("ERROR: \(err)")
     }
 }
 
+// TODO:
+//
+// Compile to:
+//
+
+// struct User {
+//     static func main() {
+//         print(add(1, 2))
+//
+//         print(add(add(1, 2), Core._plus(3, 4)))
+//         print(z)
+//     }
+//
+//     static let x = 23
+//     static let y = 44.5
+//     static let z = add(x, y)
+//
+//     static func add(_ a: Any, _ b: Any) -> Any {
+//         return Core._plus(a, b, x, y)
+//     }
+// }
+//
+// User.main()
+
+// This allows for future modules, and allows for functions and vars
+// to be output in any order. Anything that's not a func or let goes
+// into a main function
+
 main()
 
 // Experiments on what some of the code might look like
 
-// enum HakiRuntimeError: Error {
-//    case invalidType(expected: String, found: String, value: Any)
-// }
-//
-// func prim_plus(_ numbers: [Any]) throws -> Any {
-//    var result: Double = 0.0
-//    try numbers.forEach { num in
-//        switch num {
-//        case let num as Int:
-//            result += Double(num)
-//        case let dub as Double:
-//            result += dub
-//        default:
-//            throw HakiRuntimeError.invalidType(expected: "Number", found: "\(type(of: num))", value: num)
-//        }
-//    }
-//    if result.rounded(.up) == result {
-//        return Int(result)
-//    }
-//    return result
-// }
-//
 //// Generated
 //
 // func add(_ aNum: Any, _ bNum: Any) throws -> Any {
