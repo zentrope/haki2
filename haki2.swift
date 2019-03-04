@@ -32,25 +32,25 @@ extension String {
     }
 }
 
-enum TokenType {
-    case openParen
-    case closeParen
-    case symbol(String)
-    case string(String)
-    case integer(String)
-    case double(String)
-    case quote
-}
-
 class Lexer {
-    static func lex(form: String) -> [TokenType] {
-        var tokens = [TokenType]()
+    enum Token {
+        case openParen
+        case closeParen
+        case symbol(String)
+        case string(String)
+        case integer(String)
+        case double(String)
+        case quote
+    }
+
+    static func lex(form: String) -> [Token] {
+        var tokens = [Token]()
         var inString = false
         var word = ""
 
         func appendString() {
             if inString {
-                tokens.append(TokenType.string(word))
+                tokens.append(Token.string(word))
             }
             word = ""
             inString = !inString
@@ -64,11 +64,11 @@ class Lexer {
             }
 
             if word.isInt() {
-                tokens.append(TokenType.integer(word))
+                tokens.append(Token.integer(word))
             } else if word.isDouble() {
-                tokens.append(TokenType.double(word))
+                tokens.append(Token.double(word))
             } else {
-                tokens.append(TokenType.symbol(word))
+                tokens.append(Token.symbol(word))
             }
 
             word = ""
@@ -89,11 +89,11 @@ class Lexer {
                 break
 
             case "(":
-                tokens.append(TokenType.openParen)
+                tokens.append(Token.openParen)
 
             case ")":
                 appendWord()
-                tokens.append(TokenType.closeParen)
+                tokens.append(Token.closeParen)
 
             case "\"":
                 appendString()
@@ -161,7 +161,8 @@ func main() {
       (def x 23)
       (def y 44.5)
       (defun add (a b)
-        (+ a b "a string", 23, 44.2, a44 "sneaky () string"))
+        (+ a b x y))
+      (add 1 2)
     """
 
     do {
