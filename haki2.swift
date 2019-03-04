@@ -149,12 +149,7 @@ class Reader {
 
     func read() throws -> String? {
         let (remaining, form) = try read(sourceCode: buffer)
-        if let remaining = remaining {
-            buffer = remaining
-        } else {
-            buffer = ""
-        }
-
+        buffer = remaining ?? ""
         return form
     }
 }
