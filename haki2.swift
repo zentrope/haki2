@@ -43,16 +43,41 @@ enum TokenType {
 }
 
 class Lexer {
-    private var tokens = [TokenType]()
-    private var inString = false
-    private var word = ""
+    static func lex(form: String) -> [TokenType] {
+        var tokens = [TokenType]()
+        var inString = false
+        var word = ""
 
-    func lex(form: String) -> [TokenType] {
-        reset()
+        func appendString() {
+            if inString {
+                tokens.append(TokenType.string(word))
+            }
+            word = ""
+            inString = !inString
+        }
+
+        func appendWord() {
+            word = word.trim()
+
+            if word.isEmpty {
+                return
+            }
+
+            if word.isInt() {
+                tokens.append(TokenType.integer(word))
+            } else if word.isDouble() {
+                tokens.append(TokenType.double(word))
+            } else {
+                tokens.append(TokenType.symbol(word))
+            }
+
+            word = ""
+        }
+
         form.trim().forEach { char in
 
             if inString, char != "\"" {
-                appendChar(char)
+                word += String(char)
                 return
             }
 
@@ -64,81 +89,39 @@ class Lexer {
                 break
 
             case "(":
-                startList()
+                tokens.append(TokenType.openParen)
 
             case ")":
                 appendWord()
-                endList()
+                tokens.append(TokenType.closeParen)
 
             case "\"":
                 appendString()
 
             default:
-                appendChar(char)
+                word += String(char)
             }
         }
         return tokens
     }
-
-    private func reset() {
-        tokens = [TokenType]()
-        inString = false
-        word = ""
-    }
-
-    private func startList() {
-        tokens.append(TokenType.openParen)
-    }
-
-    private func endList() {
-        tokens.append(TokenType.closeParen)
-    }
-
-    private func appendChar(_ char: Character) {
-        word += String(char)
-    }
-
-    private func appendString() {
-        if inString {
-            tokens.append(TokenType.string(word))
-        }
-        word = ""
-        inString = !inString
-    }
-
-    private func appendWord() {
-        word = word.trim()
-
-        if word.isEmpty {
-            return
-        }
-
-        if word.isInt() {
-            tokens.append(TokenType.integer(word))
-        } else if word.isDouble() {
-            tokens.append(TokenType.double(word))
-        } else {
-            tokens.append(TokenType.symbol(word))
-        }
-
-        word = ""
-    }
 }
 
 class Reader {
+    enum ReaderError: Error {
+        case incompleteForm(startingAt: String)
+    }
+
     private var buffer: String
 
     init(text: String) {
         buffer = text
     }
 
-    func parse() -> [String] {
-        return parse(sourceCode: buffer, forms: [])
-    }
+    // Initially, read lazily rather than process the entire buffer at once.
 
-    private func parse(sourceCode: String, forms: [String]) -> [String] {
+    private func read(sourceCode: String) throws -> (String?, String?) {
         if sourceCode.trim().isEmpty {
-            return forms
+            return (nil, nil)
         }
         var opens = 0
         var closes = 0
@@ -156,41 +139,51 @@ class Reader {
             }
         }
 
-        let remainingSourceCode = String(sourceCode.dropFirst(form.count)).trim()
-        let currentForms = forms + [form.trim()]
+        if opens != closes {
+            throw ReaderError.incompleteForm(startingAt: String(sourceCode.prefix(30)) + "...")
+        }
 
-        return parse(sourceCode: remainingSourceCode, forms: currentForms)
+        let remainingSourceCode = String(sourceCode.dropFirst(form.count)).trim()
+        return (remainingSourceCode, form.trim())
+    }
+
+    func read() throws -> String? {
+        let (remaining, form) = try read(sourceCode: buffer)
+        if let remaining = remaining {
+            buffer = remaining
+        } else {
+            buffer = ""
+        }
+
+        return form
     }
 }
 
 // ----------------------------------------------------------------------------
 
-let script = """
-  (def x 23)
-  (def y 44.5)
-  (defun add (a b)
-    (+ a b "a string", 23, 44.2, a44 "sneaky () string"))
-"""
+func main() {
+    let script = """
+      (def x 23)
+      (def y 44.5)
+      (defun add (a b)
+        (+ a b "a string", 23, 44.2, a44 "sneaky () string"))
+    """
 
-let reader = Reader(text: script)
-let forms = reader.parse()
-
-let lexer = Lexer()
-for form in forms {
-    print("form: \(form)")
-    let tokens = lexer.lex(form: form)
-    tokens.forEach { token in
-        print("  token: `\(token)`")
+    do {
+        let reader = Reader(text: script)
+        while let form = try reader.read() {
+            print("form: \(form)")
+            let tokens = Lexer.lex(form: form)
+            tokens.forEach { token in
+                print("  token: `\(token)`")
+            }
+        }
+    } catch let err {
+        print("ERROR: \(err)")
     }
 }
 
-// print(forms)
-// let lexer = Lexer()
-// let tokens = lexer.lex(form: script)
-// print(script)
-//tokens.forEach { token in
-//    print("token: `\(token)`")
-// }
+main()
 
 // Experiments on what some of the code might look like
 
