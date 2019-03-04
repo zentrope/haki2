@@ -2,18 +2,17 @@
 // Copyright (c) 2019-present Keith Irwin
 //
 // This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published
-// by the Free Software Foundation, either version 3 of the License,
-// or (at your option) any later version.
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or (at
+// your option) any later version.
 //
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
+// This program is distributed in the hope that it will be useful, but
+// WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+// General Public License for more details.
 //
 // You should have received a copy of the GNU General Public License
-// along with this program.  If not, see
-// <http://www.gnu.org/licenses/>.
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
 
 import Foundation
@@ -32,16 +31,75 @@ extension String {
     }
 }
 
-class Lexer {
-    enum Token {
-        case openParen
-        case closeParen
-        case symbol(String)
-        case string(String)
-        case integer(String)
-        case double(String)
-        case quote
+// ----------------------------------------------------------------------------
+
+class Reader {
+    // Given a bunch of source code, return expressions suitable for
+    // lexing.
+
+    enum ReaderError: Error {
+        case incompleteForm(startingAt: String)
     }
+
+    private var buffer: String
+
+    init(text: String) {
+        buffer = text
+    }
+
+    // Initially, read lazily rather than process the entire buffer at
+    // once.
+
+    private func read(sourceCode: String) throws -> (String?, String?) {
+        if sourceCode.trim().isEmpty {
+            return (nil, nil)
+        }
+        var opens = 0
+        var closes = 0
+        var form = ""
+        for char in sourceCode {
+            if char == "(" {
+                opens += 1
+            }
+            if char == ")" {
+                closes += 1
+            }
+            form += String(char)
+            if opens > 0, opens == closes {
+                break
+            }
+        }
+
+        if opens != closes {
+            throw ReaderError.incompleteForm(startingAt: String(sourceCode.prefix(30)) + "...")
+        }
+
+        let remainingSourceCode = String(sourceCode.dropFirst(form.count)).trim()
+        return (remainingSourceCode, form.trim())
+    }
+
+    func read() throws -> String? {
+        let (remaining, form) = try read(sourceCode: buffer)
+        buffer = remaining ?? ""
+        return form
+    }
+}
+
+// ----------------------------------------------------------------------------
+
+enum Token {
+    case openParen
+    case closeParen
+    case symbol(String)
+    case string(String)
+    case integer(String)
+    case double(String)
+    case quote
+}
+
+struct Lexer {
+    // Given a valid form (balanced parens), return a vector of typed
+    // tokens suitable for parsing.
 
     static func lex(form: String) -> [Token] {
         var tokens = [Token]()
@@ -106,52 +164,88 @@ class Lexer {
     }
 }
 
-class Reader {
-    enum ReaderError: Error {
-        case incompleteForm(startingAt: String)
-    }
+// ----------------------------------------------------------------------------
 
-    private var buffer: String
+enum Sexp {
+    case atom(Token)
+    case list([Sexp])
 
-    init(text: String) {
-        buffer = text
-    }
-
-    // Initially, read lazily rather than process the entire buffer at once.
-
-    private func read(sourceCode: String) throws -> (String?, String?) {
-        if sourceCode.trim().isEmpty {
-            return (nil, nil)
+    static func toString(_ sexp: Sexp) -> String {
+        switch sexp {
+        case let .atom(token):
+            return "\(token)"
+        case let .list(values):
+            return "[ " + values.map { toString($0) }.joined(separator: ", ") + " ]"
         }
-        var opens = 0
-        var closes = 0
-        var form = ""
-        for char in sourceCode {
-            if char == "(" {
-                opens += 1
-            }
-            if char == ")" {
-                closes += 1
-            }
-            form += String(char)
-            if opens > 0, opens == closes {
-                break
-            }
-        }
+    }
+}
 
-        if opens != closes {
-            throw ReaderError.incompleteForm(startingAt: String(sourceCode.prefix(30)) + "...")
-        }
-
-        let remainingSourceCode = String(sourceCode.dropFirst(form.count)).trim()
-        return (remainingSourceCode, form.trim())
+class Parser {
+    enum ParseError: Error {
+        case unknownToken(token: Token)
     }
 
-    func read() throws -> String? {
-        let (remaining, form) = try read(sourceCode: buffer)
-        buffer = remaining ?? ""
-        return form
+    var tokens: [Token]
+    var position = 0
+
+    init(_ tokens: [Token]) {
+        self.tokens = tokens
     }
+
+    func parse() throws -> Sexp {
+        let token = next()
+
+        switch token {
+        case Token.openParen:
+            return try parseList()
+        case Token.symbol, Token.integer, Token.double, Token.string:
+            return Sexp.atom(token)
+        default:
+            throw ParseError.unknownToken(token: token)
+        }
+    }
+
+    private func pushBack() {
+        if position > 0 {
+            position = position - 1
+        }
+    }
+
+    private func next() -> Token {
+        let t = tokens[position]
+        position += 1
+        return t
+    }
+
+    private func notDone() -> Bool {
+        return position + 1 != tokens.count
+    }
+
+    private func parseList() throws -> Sexp {
+        var list = [Sexp]()
+
+        done: while notDone() {
+            let token = next()
+            switch token {
+            case Token.openParen:
+                let subList = try parseList()
+                list.append(subList)
+            case Token.closeParen:
+                break done
+            default:
+                pushBack()
+                let atom = try parse()
+                list.append(atom)
+            }
+        }
+        return Sexp.list(list)
+    }
+}
+
+// ----------------------------------------------------------------------------
+
+class Compiler {
+    func compile(expression _: Sexp) {}
 }
 
 // ----------------------------------------------------------------------------
@@ -173,6 +267,9 @@ func main() {
             tokens.forEach { token in
                 print("  token: `\(token)`")
             }
+
+            let expr = try Parser(tokens).parse()
+            print("  expr: `\(Sexp.toString(expr))`")
         }
     } catch let err {
         print("ERROR: \(err)")
