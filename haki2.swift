@@ -413,6 +413,10 @@ struct User {
     static func main() {
         do {
             let core = try String(contentsOfFile: "./core.swift", encoding: .utf8)
+            print("#!/usr/bin/env swift")
+            print("// haki2")
+            print("// date: \(Date())")
+            print("//\n")
             print(core)
             let reader = Reader(text: script)
             var context = Context(namespace: "User")
