@@ -287,6 +287,10 @@ class Context {
 class Compiler {
     // Attempts to output sensible Swift from Lisp forms
 
+    enum CompilerError: Error {
+        case generic(String)
+    }
+
     var primitives: [String: String] = [
         "+": "Core._plus",
     ]
@@ -295,60 +299,50 @@ class Compiler {
         return primitives[name] ?? name
     }
 
-    func compileDef(_ sexp: Sexp) -> String {
-        if case let .list(values) = sexp {
+    func compileDef(ctx: Context, expr: Sexp) throws -> String {
+        if case let .list(values) = expr {
             let name = values[1].getValue()
             let val = values[2]
-            var expr = ""
-            switch val {
-            case .atom:
-                expr = val.getValue()
-            case .list:
-                expr = compileCall(val)
-            }
-            return "static let \(name) = \(expr)"
+            let text = try compile(context: ctx, sexp: val)
+            return "static let \(name) = \(text)"
         }
-        return "#ERROR#"
+        throw CompilerError.generic("def must be followed by a list \(expr)")
     }
 
-    func compileCall(_ sexp: Sexp) -> String {
-        if case let .list(values) = sexp {
+    func compileCall(ctx: Context, expr: Sexp) throws -> String {
+        if case let .list(values) = expr {
             let name = getPrimitive(values[0].getValue())
-            let params = values.dropFirst()
-                .map {
-                    switch $0 {
-                    case .atom:
-                        return $0.getValue()
-                    case .list:
-                        return compileCall($0)
-                    }
-
-                }.joined(separator: ", ")
+            let params = try values
+                .dropFirst()
+                .map { try compile(context: ctx, sexp: $0) }
+                .joined(separator: ", ")
             return "\(name)(\(params))"
         }
-        return "#ERROR#"
+        throw CompilerError.generic("function call must be a list \(expr)")
     }
 
-    func compileParams(_ sexp: Sexp) -> String {
-        if case let .list(values) = sexp {
-            return values.map { "_ \($0.getValue()):Any" }.joined(separator: ", ")
-        }
-        return "#ERROR#"
-    }
-
-    func compileDefun(_ sexp: Sexp) -> String {
-        if case let .list(values) = sexp {
-            let name = values[1].getValue()
-            let isMain = name == "-main"
-            let params = compileParams(values[2])
-            var exprs: [String] = values[3 ..< Array(values).count].map {
+    func compileParams(ctx: Context, expr: Sexp) throws -> String {
+        if case let .list(values) = expr {
+            return try values.map {
                 switch $0 {
                 case .atom:
-                    return "  " + $0.getValue()
-                case .list:
-                    return "  " + compileCall($0)
+                    let val = try compile(context: ctx, sexp: $0)
+                    return "_ \(val):Any"
+                default:
+                    throw CompilerError.generic("param name must NOT be a list \($0)")
                 }
-            }
+            }.joined(separator: ", ")
+        }
+        throw CompilerError.generic("function params must be a list \(expr)")
+    }
+
+    func compileDefun(ctx: Context, expr: Sexp) throws -> String {
+        if case let .list(values) = expr {
+            let name = values[1].getValue()
+            let isMain = name == "-main"
+            let params = try compileParams(ctx: ctx, expr: values[2])
+            var exprs: [String] = try values[3 ..< Array(values).count]
+                .map { try compile(context: ctx, sexp: $0) }
             if isMain {
                 let body = exprs.joined(separator: "\n")
                 return "static func main (\(params)) {\n\(body)\n}"
@@ -357,37 +351,34 @@ class Compiler {
             let body = exprs.joined(separator: "\n")
             return "static func \(name) (\(params)) -> Any {\n\(body)\n}"
         }
-        return "#ERROR#"
+        throw CompilerError.generic("A defun must be a list. \(expr)")
     }
 
-    func compile(context: Context, sexp: Sexp) -> Context {
+    func compile(context: Context, sexp: Sexp) throws -> String {
         context.printBegin()
         switch sexp {
         case .atom:
-            print("got a token \(sexp.getValue())")
-            return context
-        case let .list(tokens):
+            return sexp.getValue()
 
+        case let .list(tokens):
             if let atom = tokens.first {
                 switch atom {
                 case .atom:
                     switch atom.getValue() {
                     case "def":
-                        print(compileDef(sexp))
+                        return try compileDef(ctx: context, expr: sexp)
                     case "defun":
-                        print(compileDefun(sexp))
+                        return try compileDefun(ctx: context, expr: sexp)
+                    // case "let"
                     default:
-                        print(compileCall(sexp))
+                        return try compileCall(ctx: context, expr: sexp)
                     }
                 case .list:
-                    print("can't start with a form with a list")
+                    throw CompilerError.generic("Can't start an expression with a list (yet). \(sexp)'")
                 }
-                return context
             }
-
-            print("can't compile sexp")
-            return context
         }
+        throw CompilerError.generic("Unable to compile \(sexp).")
     }
 }
 
@@ -414,18 +405,17 @@ struct User {
         do {
             let core = try String(contentsOfFile: "./core.swift", encoding: .utf8)
             print("#!/usr/bin/env swift")
-            print("// haki2")
             print("// date: \(Date())")
             print("//\n")
             print(core)
             let reader = Reader(text: script)
-            var context = Context(namespace: "User")
+            let context = Context(namespace: "User")
             while let form = try reader.read() {
                 print("  ")
                 let tokens = Lexer.lex(form: form)
                 let expr = try Parser(tokens).parse()
                 let comp = Compiler()
-                context = comp.compile(context: context, sexp: expr)
+                print(try comp.compile(context: context, sexp: expr))
             }
             context.printEnd()
             context.printInvoke()

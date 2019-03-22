@@ -1,3 +1,7 @@
+// HAKI2
+
+import Foundation
+
 struct Core {
     static func _plus(_ numbers: [Any]) -> Any {
         var result: Double = 0.0
