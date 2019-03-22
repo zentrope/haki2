@@ -173,8 +173,10 @@ enum Sexp {
     func getValue() -> String {
         if case let .atom(token) = self {
             switch token {
-            case let .symbol(val), let .integer(val), let .string(val), let .double(val):
+            case let .symbol(val), let .integer(val), let .double(val):
                 return val
+            case let .string(val):
+                return "\"\(val)\""
             default:
                 return "ERROR"
             }
@@ -391,83 +393,42 @@ class Compiler {
 
 // ----------------------------------------------------------------------------
 
-let core = try String(contentsOfFile: "./core.swift", encoding: .utf8)
+struct User {
+    static let script =
+        """
+          (def x 23)
+          (def y 44.5)
+          (def z (add 1 3))
 
-let script =
-    """
-      (def x 23)
-      (def y 44.5)
-      (def z (add 1 3))
+          (defun add (a b)
+            (+ a b x y))
 
-      (defun add (a b)
-        (+ a b x y))
+          (defun -main ()
+            (print (add 1 2))
+            (print (add (add 1 2) (+ 3 4)))
+            (print "This is a string.")
+            )
+        """
 
-      (defun -main ()
-        (print (add 1 2))
-        (print (add (add 1 2) (+ 3 4))))
-    """
-
-func main() {
-    print(core)
-    do {
-        let reader = Reader(text: script)
-        var context = Context(namespace: "User")
-        while let form = try reader.read() {
-            print("  ")
-            let tokens = Lexer.lex(form: form)
-            let expr = try Parser(tokens).parse()
-            let comp = Compiler()
-            context = comp.compile(context: context, sexp: expr)
+    static func main() {
+        do {
+            let core = try String(contentsOfFile: "./core.swift", encoding: .utf8)
+            print(core)
+            let reader = Reader(text: script)
+            var context = Context(namespace: "User")
+            while let form = try reader.read() {
+                print("  ")
+                let tokens = Lexer.lex(form: form)
+                let expr = try Parser(tokens).parse()
+                let comp = Compiler()
+                context = comp.compile(context: context, sexp: expr)
+            }
+            context.printEnd()
+            context.printInvoke()
+        } catch let err {
+            print("ERROR: \(err)")
         }
-        context.printEnd()
-        context.printInvoke()
-    } catch let err {
-        print("ERROR: \(err)")
     }
 }
 
-// TODO:
-//
-// Compile to:
-//
-
-// struct User {
-//     static func main() {
-//         print(add(1, 2))
-//
-//         print(add(add(1, 2), Core._plus(3, 4)))
-//         print(z)
-//     }
-//
-//     static let x = 23
-//     static let y = 44.5
-//     static let z = add(x, y)
-//
-//     static func add(_ a: Any, _ b: Any) -> Any {
-//         return Core._plus(a, b, x, y)
-//     }
-// }
-//
-// User.main()
-
-// This allows for future modules, and allows for functions and vars
-// to be output in any order. Anything that's not a func or let goes
-// into a main function
-
-main()
-
-// Experiments on what some of the code might look like
-
-//// Generated
-//
-// func add(_ aNum: Any, _ bNum: Any) throws -> Any {
-//    return try prim_plus([aNum, bNum])
-// }
-//
-//// Test
-//
-// do {
-//    print(try add(1, 12))
-// } catch let err {
-//    print("Error: \(err)")
-// }
+User.main()
