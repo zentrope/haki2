@@ -256,6 +256,32 @@ class Parser {
 
 // ----------------------------------------------------------------------------
 
+class Context {
+    // Hold context for where the compiler is at any given moment.
+
+    var namespace: String
+    var started: Bool = false
+
+    init(namespace: String) {
+        self.namespace = namespace
+    }
+
+    func printBegin() {
+        if !started {
+            print("struct \(namespace) {")
+            started = true
+        }
+    }
+
+    func printEnd() {
+        print("} // \(namespace)")
+    }
+
+    func printInvoke() {
+        print("\n\(namespace).main()")
+    }
+}
+
 class Compiler {
     // Attempts to output sensible Swift from Lisp forms
 
@@ -278,7 +304,7 @@ class Compiler {
             case .list:
                 expr = compileCall(val)
             }
-            return "let \(name) = \(expr)"
+            return "static let \(name) = \(expr)"
         }
         return "#ERROR#"
     }
@@ -311,6 +337,7 @@ class Compiler {
     func compileDefun(_ sexp: Sexp) -> String {
         if case let .list(values) = sexp {
             let name = values[1].getValue()
+            let isMain = name == "-main"
             let params = compileParams(values[2])
             var exprs: [String] = values[3 ..< Array(values).count].map {
                 switch $0 {
@@ -320,18 +347,23 @@ class Compiler {
                     return "  " + compileCall($0)
                 }
             }
-
+            if isMain {
+                let body = exprs.joined(separator: "\n")
+                return "static func main (\(params)) {\n\(body)\n}"
+            }
             exprs[exprs.count - 1] = "  return " + (exprs.last ?? "nil").trim()
             let body = exprs.joined(separator: "\n")
-            return "func \(name) (\(params)) -> Any {\n\(body)\n}"
+            return "static func \(name) (\(params)) -> Any {\n\(body)\n}"
         }
         return "#ERROR#"
     }
 
-    func compile(_ sexp: Sexp) {
+    func compile(context: Context, sexp: Sexp) -> Context {
+        context.printBegin()
         switch sexp {
         case .atom:
             print("got a token \(sexp.getValue())")
+            return context
         case let .list(tokens):
 
             if let atom = tokens.first {
@@ -348,10 +380,11 @@ class Compiler {
                 case .list:
                     print("can't start with a form with a list")
                 }
-                return
+                return context
             }
 
             print("can't compile sexp")
+            return context
         }
     }
 }
@@ -364,24 +397,30 @@ let script =
     """
       (def x 23)
       (def y 44.5)
+      (def z (add 1 3))
 
       (defun add (a b)
         (+ a b x y))
-      (print (add 1 2))
-      (print (add (add 1 2) (+ 3 4)))
+
+      (defun -main ()
+        (print (add 1 2))
+        (print (add (add 1 2) (+ 3 4))))
     """
 
 func main() {
     print(core)
     do {
         let reader = Reader(text: script)
+        var context = Context(namespace: "User")
         while let form = try reader.read() {
             print("  ")
             let tokens = Lexer.lex(form: form)
             let expr = try Parser(tokens).parse()
             let comp = Compiler()
-            comp.compile(expr)
+            context = comp.compile(context: context, sexp: expr)
         }
+        context.printEnd()
+        context.printInvoke()
     } catch let err {
         print("ERROR: \(err)")
     }
